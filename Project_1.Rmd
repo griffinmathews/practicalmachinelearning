@@ -1,0 +1,142 @@
+---
+title: "Practical Machine Learning Project 1"
+author: "Griffin Mathews"
+date: "December 17, 2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Introduction
+
+The goal of this project is to predict the correctness of different types of exercises done while wearing a fitness device. We will begin by loading required libraries for prediction.
+
+```{r libraries}
+library(caret)
+library(AppliedPredictiveModeling)
+library(rattle)
+library(randomForest)
+library(corrplot)
+library(Hmisc)
+print("Success")
+```
+
+## Load Data
+
+
+```{r pressure}
+training <- read.csv(url("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"))
+testing <- read.csv(url("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"))
+#str(training)
+```
+
+## Cleaning Data
+Columns with over 80% missing values are removed from the training and testing datasets, as they do not add much value to the predictions. The first 7 columns are also irrelevant to the prediction.
+
+```{r removena}
+naColumns <- which(colSums(is.na(training))>0.8)
+trainingClean <- training[, -naColumns]
+trainingClean <- trainingClean[, -c(1:7)]
+
+testingClean <- testing[, -naColumns]
+testingClean <- testingClean[, -c(1:7)]
+
+dim(trainingClean)
+```
+
+After initial cleaning, only 86 columns remain. Lets remove variables with very little variation, as these add very little to the model.
+
+```{r removeZero}
+nearZero <- nearZeroVar(testingClean)
+trainingClean <- trainingClean[,-nearZero]
+dim(trainingClean)
+```
+This removed another 35 factors from the model. Lastly, we can remove variables which are highly correlated with each other.
+
+```{r correlation}
+corPlot <- cor(trainingClean[,-53])
+zdf <- as.data.frame(as.table(corPlot))
+highCorr <- subset(zdf, Freq > 0.5)
+highCorr
+```
+Based on this, we will remove:
+- yaw_belt
+- total_accel_belt
+- accel_belt_y
+
+```{r cleanCorr}
+trainingClean <- subset(trainingClean, select=-c(yaw_belt,total_accel_belt, accel_belt_y))
+dim(trainingClean)
+```
+
+The seed is set to allow for reproduceability and then split the data into training and testing sets with a 75/25 split. Cross Validation is used in the creation of the model with 10 folds.
+
+```{r classification}
+set.seed(456789)
+inTrain1 <- createDataPartition(trainingClean$classe, p=0.75, list=FALSE)
+Train1 <- trainingClean[inTrain1,]
+Test1 <- trainingClean[-inTrain1,]
+dim(Train1)
+
+fitControl <- trainControl(method = 'cv', number = 10)
+mod_ct <- train(classe ~ ., 
+                data = Train1, 
+                method = 'rpart', 
+                trControl = fitControl)
+
+fancyRpartPlot(mod_ct$finalModel)
+
+pred_ct <- predict(mod_ct, Test1)
+confusionMatrix(pred_ct, as.factor(Test1$classe))$overall[1]
+```
+
+Unfortunately, the classification tree model is only accurate ~50% of the time. This next model will use random forest to try and increase the accuracy of the prediction.
+
+```{r RandomForest, cache=TRUE}
+set.seed(456789)
+inTrain1 <- createDataPartition(trainingClean$classe, p=0.75, list=FALSE)
+Train1 <- trainingClean[inTrain1,]
+Test1 <- trainingClean[-inTrain1,]
+dim(Train1)
+
+fitControl <- trainControl(method = 'cv', number = 10)
+mod_rf <- train(classe ~ ., 
+                data = Train1, 
+                method = 'rf', 
+                trControl = fitControl)
+
+pred_rf <- predict(mod_rf, Test1)
+confusionMatrix(pred_rf, as.factor(Test1$classe))$overall[1]
+```
+The random forest model significantly improves the prediction accuracy of the model, with almost 99% accuracy. An accuracy of 99% implies an out of sample error of ~0, but this could be due to overfitting. Lets check the plot the model.
+
+```{r rfmodel}
+plot(mod_rf)
+```
+```{r GradientBoosting, cache=TRUE}
+set.seed(456789)
+inTrain1 <- createDataPartition(trainingClean$classe, p=0.75, list=FALSE)
+Train1 <- trainingClean[inTrain1,]
+Test1 <- trainingClean[-inTrain1,]
+dim(Train1)
+
+fitControl <- trainControl(method = 'cv', number = 10)
+mod_gbm <- train(classe ~ ., 
+                data = Train1, 
+                method = 'gbm', 
+                trControl = fitControl)
+
+mod_gbm$finalModel
+print(mod_gbm)
+predict_gbm <- predict(mod_gbm, newdata=Test1)
+cm_gbm <- confusionMatrix(predict_gbm, as.factor(Test1$classe))
+cm_gbm
+```
+The gradient boosted model had a prediction accuracy of 95%, slightly less than the 99% accuracy of the random forest model. However, the gradient boosted model ran significantly faster than the random forest model. For this project the speed of model training isn't nearly as important, so the random forest model will be used for overall validation.
+
+```{r validation}
+Results <- predict(mod_rf, newdata = testingClean)
+Results
+```
